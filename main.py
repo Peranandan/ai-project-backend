@@ -1,80 +1,108 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import google.generativeai as genai
+from datetime import datetime
 
 # =========================
-# LOAD ENV FILE
+# LOAD ENV
 # =========================
 load_dotenv()
 
 API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 
-# =========================
-# GEMINI CONFIG
-# =========================
-genai.configure(api_key=API_KEY)
-model = genai.GenerativeModel("gemini-1.5-flash")
+if not API_KEY:
+    raise Exception("GEMINI_API_KEY missing")
 
-# =========================
-# FASTAPI APP
-# =========================
+genai.configure(api_key=API_KEY)
+
+# ⚡ YOUR MODEL (AS REQUESTED)
+model = genai.GenerativeModel("gemini-2.5-flash-lite")
+
 app = FastAPI()
 
 # =========================
-# CORS SETUP (IMPORTANT)
+# CORS
 # =========================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # change to frontend URL in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # =========================
-# HOME ROUTE
+# DAILY LIMIT (6/DAY)
 # =========================
-@app.get("/")
-def home():
-    return {"message": "AI Project Generator API Running"}
+user_requests = {}
+DAILY_LIMIT = 6
+
+
+def check_limit(ip: str):
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if ip not in user_requests:
+        user_requests[ip] = {"date": today, "count": 0}
+
+    if user_requests[ip]["date"] != today:
+        user_requests[ip] = {"date": today, "count": 0}
+
+    if user_requests[ip]["count"] >= DAILY_LIMIT:
+        return False
+
+    user_requests[ip]["count"] += 1
+    return True
+
 
 # =========================
-# GENERATE PROJECT API
+# API
 # =========================
 @app.post("/generate")
-async def generate(data: dict):
+async def generate(request: Request, data: dict):
 
-    try:
-        domain = data.get("domain", "")
-        technology = data.get("technology", "")
-        level = data.get("level", "")
+    ip = request.client.host
 
-        # 🚀 COST-OPTIMIZED PROMPT (SHORT = CHEAPER)
-        prompt = f"""
-Create AI Project:
+    if not check_limit(ip):
+        raise HTTPException(status_code=429, detail="Daily limit reached (6/day)")
 
-Department: {domain}
-Technology: {technology}
-Level: {level}
+    domain = data.get("domain", "")
+    tech = data.get("technology", "")
+    level = data.get("level", "")
 
-Return:
-Title
-Overview
-Steps
-Code (short)
+    # =========================
+    # COST OPTIMIZED PROMPT (VERY SHORT)
+    # =========================
+    prompt = f"""
+AI Project Generator
+
+Dept:{domain}
+Tech:{tech}
+Level:{level}
+
+Give EXACT format:
+
+1.Title
+2.Idea
+3.Features (3 points)
+4.Steps (3-5 points)
+5.Code (short example)
+
+Keep response short.
 """
 
-        response = model.generate_content(prompt)
-
-        return {
-            "success": True,
-            "result": response.text
+    response = model.generate_content(
+        prompt,
+        generation_config={
+            "max_output_tokens": 450,  # controlled cost
+            "temperature": 0.7
         }
+    )
 
-    except Exception as e:
-        return {
-            "success": False,
-            "message": str(e)
-        }
+    return {
+        "success": True,
+        "model": "gemini-2.5-flash-lite",
+        "limit_remaining": DAILY_LIMIT - user_requests[ip]["count"],
+        "result": response.text
+    }
