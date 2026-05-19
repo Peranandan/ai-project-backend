@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import google.generativeai as genai
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # =========================
 # LOAD ENV
@@ -12,19 +12,17 @@ load_dotenv()
 
 API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 
-if not API_KEY:
-    raise Exception("GEMINI_API_KEY missing")
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
+else:
+    model = None
 
-genai.configure(api_key=API_KEY)
-
-# ⚡ YOUR MODEL (AS REQUESTED)
-model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
+# =========================
+# APP
+# =========================
 app = FastAPI()
 
-# =========================
-# CORS
-# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,46 +32,66 @@ app.add_middleware(
 )
 
 # =========================
-# DAILY LIMIT (6/DAY)
+# 24-HOUR LIMIT SYSTEM
 # =========================
 user_requests = {}
 DAILY_LIMIT = 6
 
 
 def check_limit(ip: str):
-    today = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.utcnow()
 
     if ip not in user_requests:
-        user_requests[ip] = {"date": today, "count": 0}
+        user_requests[ip] = {
+            "count": 0,
+            "reset_time": now + timedelta(hours=24)
+        }
 
-    if user_requests[ip]["date"] != today:
-        user_requests[ip] = {"date": today, "count": 0}
+    user_data = user_requests[ip]
 
-    if user_requests[ip]["count"] >= DAILY_LIMIT:
-        return False
+    # RESET AFTER 24 HOURS
+    if now > user_data["reset_time"]:
+        user_data["count"] = 0
+        user_data["reset_time"] = now + timedelta(hours=24)
 
-    user_requests[ip]["count"] += 1
-    return True
+    if user_data["count"] >= DAILY_LIMIT:
+        return False, int((user_data["reset_time"] - now).seconds)
+
+    user_data["count"] += 1
+    return True, int((user_data["reset_time"] - now).seconds)
 
 
 # =========================
-# API
+# HOME
+# =========================
+@app.get("/")
+def home():
+    return {"message": "AI Project Generator Running 🚀"}
+
+
+# =========================
+# GENERATE API
 # =========================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
+    if model is None:
+        raise HTTPException(status_code=500, detail="Gemini API Key missing")
+
     ip = request.client.host
 
-    if not check_limit(ip):
-        raise HTTPException(status_code=429, detail="Daily limit reached (6/day)")
+    allowed, time_left = check_limit(ip)
+
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily limit reached. Try again after {time_left//3600}h {(time_left%3600)//60}m"
+        )
 
     domain = data.get("domain", "")
     tech = data.get("technology", "")
     level = data.get("level", "")
 
-    # =========================
-    # COST OPTIMIZED PROMPT (VERY SHORT)
-    # =========================
     prompt = f"""
 AI Project Generator
 
@@ -81,28 +99,25 @@ Dept:{domain}
 Tech:{tech}
 Level:{level}
 
-Give EXACT format:
-
+Return:
 1.Title
 2.Idea
-3.Features (3 points)
-4.Steps (3-5 points)
-5.Code (short example)
-
-Keep response short.
+3.Features (3)
+4.Steps (3-5)
+5.Code (short)
 """
 
     response = model.generate_content(
         prompt,
         generation_config={
-            "max_output_tokens": 450,  # controlled cost
+            "max_output_tokens": 400,
             "temperature": 0.7
         }
     )
 
     return {
         "success": True,
-        "model": "gemini-2.5-flash-lite",
-        "limit_remaining": DAILY_LIMIT - user_requests[ip]["count"],
-        "result": response.text
+        "result": response.text,
+        "remaining": DAILY_LIMIT - user_requests[ip]["count"],
+        "reset_in_seconds": time_left
     }
