@@ -1,176 +1,204 @@
-import { useState } from "react";
-import "./markdown.css";
+import os
+import hashlib
+import time
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, field_validator
+from dotenv import load_dotenv
+import google.generativeai as genai
 
-export default function App() {
+load_dotenv()
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise ValueError("GEMINI_API_KEY not found in environment variables")
 
-  const [department, setDepartment] = useState("");
-  const [technology, setTechnology] = useState("");
-  const [level, setLevel] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState("");
+genai.configure(api_key=API_KEY)
 
-  const API_URL =
-    "https://ai-project-backend-pcuo.onrender.com/chat";
+MODEL_NAME = "gemini-2.5-flash-lite"
 
-  const generateProject = async () => {
+SYSTEM_PROMPT = """You are an engineering project generator.
+Always respond in this exact format:
 
-    if (!department || !technology || !level) {
-      alert("Please fill all fields");
-      return;
+Project Title: <title>
+
+Components: <component1>, <component2>, <component3>
+
+Description: <2-3 sentence description>
+
+Steps:
+1. <step one>
+2. <step two>
+3. <step three>
+4. <step four>
+
+Keep response under 300 words."""
+
+model = genai.GenerativeModel(
+    model_name=MODEL_NAME,
+    system_instruction=SYSTEM_PROMPT,
+    generation_config=genai.GenerationConfig(
+        max_output_tokens=400,
+        temperature=0.7,
+        candidate_count=1,
+    )
+)
+
+MAX_INPUT_CHARS = 120
+MAX_OUTPUT_TOKENS = 400
+CACHE_TTL_SECONDS = 300
+MAX_HISTORY_TURNS = 10
+
+_cache: dict[str, tuple[str, float]] = {}
+
+def get_cached(prompt: str) -> str | None:
+    key = hashlib.md5(prompt.encode()).hexdigest()
+    if key in _cache:
+        response, timestamp = _cache[key]
+        if time.time() - timestamp < CACHE_TTL_SECONDS:
+            return response
+        del _cache[key]
+    return None
+
+def set_cache(prompt: str, response: str):
+    key = hashlib.md5(prompt.encode()).hexdigest()
+    _cache[key] = (response, time.time())
+    if len(_cache) > 500:
+        oldest = sorted(_cache.items(), key=lambda x: x[1][1])[:100]
+        for k, _ in oldest:
+            del _cache[k]
+
+app = FastAPI(
+    title="Gemini 2.5 Flash-Lite API",
+    description="Cost-optimized FastAPI backend using Gemini 2.5 Flash-Lite",
+    version="2.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ChatRequest(BaseModel):
+    message: str
+    use_cache: bool = True
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Message cannot be empty")
+        if len(v) > MAX_INPUT_CHARS:
+            raise ValueError(f"Message too long (max {MAX_INPUT_CHARS} characters)")
+        return v
+
+class Message(BaseModel):
+    role: str
+    text: str
+
+class MultiTurnRequest(BaseModel):
+    history: list[Message] = []
+    message: str
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Message cannot be empty")
+        if len(v) > MAX_INPUT_CHARS:
+            raise ValueError(f"Message too long (max {MAX_INPUT_CHARS} characters)")
+        return v
+
+    @field_validator("history")
+    @classmethod
+    def validate_history(cls, v):
+        return v[-MAX_HISTORY_TURNS:] if len(v) > MAX_HISTORY_TURNS else v
+
+@app.get("/")
+def root():
+    return {
+        "status": "running",
+        "model": MODEL_NAME,
+        "max_input_chars": MAX_INPUT_CHARS,
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "cache_size": len(_cache)
     }
 
-    const message =
-      `Dept:${department} Tech:${technology} Level:${level} project`;
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    if req.use_cache:
+        cached = get_cached(req.message)
+        if cached:
+            return {
+                "success": True,
+                "input": req.message,
+                "response": cached,
+                "cached": True
+            }
+    try:
+        response = model.generate_content(
+            req.message,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                candidate_count=1,
+            )
+        )
+        text = response.text
+        if req.use_cache:
+            set_cache(req.message, text)
+        return {
+            "success": True,
+            "input": req.message,
+            "response": text,
+            "cached": False
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini API error: {str(e)}")
 
-    try {
-      setLoading(true);
-      setResult("");
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest):
+    def generate():
+        try:
+            response = model.generate_content(
+                req.message,
+                stream=True,
+                generation_config=genai.GenerationConfig(
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
+                    candidate_count=1,
+                )
+            )
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            yield f"[ERROR]: {str(e)}"
+    return StreamingResponse(generate(), media_type="text/plain")
 
-      const response = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message }),
-      });
-
-      const data = await response.json();
-
-      console.log(data);
-
-      if (data.success) {
-        setResult(data.response);
-      } else {
-        alert(data.detail || "Something went wrong");
-      }
-
-    } catch (error) {
-      console.log(error);
-      alert("Backend connection failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Parse result into sections
-  const parseResult = (text) => {
-    const lines = text.split("\n").filter(Boolean);
-    return lines;
-  };
-
-  return (
-    <div className="page">
-      <div className="container">
-
-        {/* HEADER */}
-        <div className="header">
-          <h1>AI Project Generator</h1>
-          <p>Generate complete engineering projects using AI</p>
-        </div>
-
-        {/* FORM */}
-        <div className="form">
-
-          {/* DEPARTMENT */}
-          <div className="field">
-            <label>Department</label>
-            <input
-              type="text"
-              placeholder="Example: CSE"
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-            />
-          </div>
-
-          {/* TECHNOLOGY */}
-          <div className="field">
-            <label>Technology</label>
-            <input
-              type="text"
-              placeholder="Example: AI, IoT"
-              value={technology}
-              onChange={(e) => setTechnology(e.target.value)}
-            />
-          </div>
-
-          {/* LEVEL */}
-          <div className="field">
-            <label>Difficulty</label>
-            <select
-              value={level}
-              onChange={(e) => setLevel(e.target.value)}
-            >
-              <option value="">Select Difficulty</option>
-              <option>Easy</option>
-              <option>Medium</option>
-              <option>Hard</option>
-            </select>
-          </div>
-
-          {/* BUTTON */}
-          <button
-            className="generate-btn"
-            onClick={generateProject}
-            disabled={loading}
-          >
-            {loading ? "Generating..." : "Generate Project"}
-          </button>
-
-        </div>
-
-        {/* RESULT */}
-        {result && (
-          <div className="result-box">
-            {parseResult(result).map((line, i) => {
-
-              // Project Title line
-              if (line.startsWith("Project Title:")) {
-                return (
-                  <div key={i} className="result-title">
-                    {line.replace("Project Title:", "").trim()}
-                  </div>
-                );
-              }
-
-              // Section headers
-              if (
-                line.startsWith("Components:") ||
-                line.startsWith("Description:") ||
-                line.startsWith("Steps:")
-              ) {
-                const [label, ...rest] = line.split(":");
-                return (
-                  <div key={i} className="result-section">
-                    <span className="result-label">{label}:</span>
-                    {rest.join(":").trim() && (
-                      <span className="result-value">
-                        {rest.join(":").trim()}
-                      </span>
-                    )}
-                  </div>
-                );
-              }
-
-              // Numbered steps
-              if (/^\d+\./.test(line)) {
-                return (
-                  <div key={i} className="result-step">
-                    {line}
-                  </div>
-                );
-              }
-
-              // Regular line
-              return (
-                <div key={i} className="result-line">
-                  {line}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-      </div>
-    </div>
-  );
-}
+@app.post("/chat/multi")
+async def chat_multi(req: MultiTurnRequest):
+    try:
+        history = [
+            {"role": msg.role, "parts": [msg.text]}
+            for msg in req.history
+            if msg.role in ("user", "model")
+        ]
+        chat_session = model.start_chat(history=history)
+        response = chat_session.send_message(
+            req.message,
+            generation_config=genai.GenerationConfig(
+                max_output_tokens=MAX_OUTPUT_TOKENS,
+                candidate_count=1,
+            )
+        )
+        return {
+            "success": True,
+            "input": req.message,
+            "response": response.text
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini API error: {str(e)}")
