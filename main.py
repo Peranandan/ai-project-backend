@@ -1,38 +1,54 @@
 import os
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
+
 import google.generativeai as genai
+
 from datetime import datetime
 
-# LOAD ENV
-load_dotenv()
+# =========================
+# GET GEMINI API KEY
+# =========================
+API_KEY = os.getenv("GEMINI_API_KEY")
 
-API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
+# CHECK KEY
+if API_KEY is None or API_KEY == "":
+    raise Exception(
+        "GEMINI_API_KEY missing in Render Environment Variables"
+    )
 
-if not API_KEY:
-    raise Exception("GEMINI_API_KEY missing")
-
-# GEMINI CONFIG
+# CONFIGURE GEMINI
 genai.configure(api_key=API_KEY)
 
+# MODEL
 model = genai.GenerativeModel(
     "gemini-2.5-flash-lite"
 )
 
+# =========================
 # FASTAPI
+# =========================
 app = FastAPI()
 
+# =========================
 # CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
+
     allow_origins=["*"],
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
 
+# =========================
 # DAILY LIMIT
+# =========================
 user_requests = {}
 
 DAILY_LIMIT = 5
@@ -42,7 +58,9 @@ def check_limit(ip):
 
     today = datetime.now().strftime("%Y-%m-%d")
 
+    # NEW USER
     if ip not in user_requests:
+
         user_requests[ip] = {
             "date": today,
             "count": 0
@@ -50,21 +68,25 @@ def check_limit(ip):
 
     # RESET DAILY
     if user_requests[ip]["date"] != today:
+
         user_requests[ip] = {
             "date": today,
             "count": 0
         }
 
-    # LIMIT
+    # LIMIT REACHED
     if user_requests[ip]["count"] >= DAILY_LIMIT:
         return False
 
+    # INCREMENT
     user_requests[ip]["count"] += 1
 
     return True
 
 
+# =========================
 # ROOT
+# =========================
 @app.get("/")
 async def root():
 
@@ -73,7 +95,9 @@ async def root():
     }
 
 
+# =========================
 # GENERATE
+# =========================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
@@ -87,11 +111,14 @@ async def generate(request: Request, data: dict):
             detail="Daily limit reached. Resets after 24 hours."
         )
 
+    # INPUTS
     domain = data.get("domain", "")
     technology = data.get("technology", "")
     level = data.get("level", "")
 
+    # =========================
     # LOW COST PROMPT
+    # =========================
     prompt = f"""
 Dept:{domain}
 Tech:{technology}
@@ -111,6 +138,7 @@ Short concise response only.
 
         response = model.generate_content(
             prompt,
+
             generation_config={
                 "max_output_tokens": 220,
                 "temperature": 0.4
