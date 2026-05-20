@@ -21,36 +21,50 @@ app.add_middleware(
 )
 
 # =====================================
-# API KEY
-# =====================================
-API_KEY = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
-
-# =====================================
-# GEMINI SETUP (IMPORTANT FIX)
+# GLOBALS
 # =====================================
 model = None
 model_error = None
 
-if API_KEY:
-    try:
-        genai.configure(api_key=API_KEY)
+DAILY_LIMIT = 5
+user_requests = {}
 
-        # IMPORTANT: force correct model init
+# =====================================
+# INIT GEMINI (SAFE RUNTIME LOAD)
+# =====================================
+def init_gemini():
+    global model, model_error
+
+    api_key = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
+
+    if not api_key:
+        model_error = "GEMINI_API_KEY not found in environment"
+        model = None
+        return
+
+    try:
+        genai.configure(api_key=api_key)
+
         model = genai.GenerativeModel(
             model_name="gemini-2.5-flash-lite"
         )
 
+        model_error = None
+
     except Exception as e:
-        model_error = str(e)
         model = None
+        model_error = str(e)
+
+
+# Run on startup (IMPORTANT FIX)
+@app.on_event("startup")
+def startup_event():
+    init_gemini()
+
 
 # =====================================
-# DAILY LIMIT
+# LIMIT CHECK
 # =====================================
-user_requests = {}
-DAILY_LIMIT = 5
-
-
 def check_limit(ip):
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -74,27 +88,27 @@ def check_limit(ip):
 def root():
     return {
         "message": "Backend Running 🚀",
-        "api_key_loaded": API_KEY is not None,
+        "api_key_loaded": os.getenv("GEMINI_API_KEY") is not None,
         "model_loaded": model is not None,
         "model_error": model_error
     }
 
 
 # =====================================
-# DEBUG ENDPOINT
+# DEBUG
 # =====================================
 @app.get("/env-check")
 def env_check():
     return {
         "GEMINI_API_KEY_in_env": "GEMINI_API_KEY" in os.environ,
-        "GEMINI_API_KEY_loaded": bool(API_KEY),
+        "GEMINI_API_KEY_loaded": bool(os.getenv("GEMINI_API_KEY")),
         "model_loaded": model is not None,
         "model_error": model_error
     }
 
 
 # =====================================
-# GENERATE ENDPOINT
+# GENERATE
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
@@ -102,7 +116,7 @@ async def generate(request: Request, data: dict):
     if model is None:
         return {
             "success": False,
-            "error": "Gemini model failed to load",
+            "error": "Gemini model not initialized",
             "details": model_error
         }
 
@@ -130,7 +144,7 @@ Generate:
 - Steps
 - Code
 
-Keep response short and structured.
+Keep it short and structured.
 """
 
     try:
