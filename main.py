@@ -36,8 +36,9 @@ if GEMINI_API_KEY:
         api_key=GEMINI_API_KEY
     )
 
+    # ✅ WORKING MODEL
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash-latest"
+        model_name="gemini-1.5-flash"
     )
 
     print(
@@ -265,7 +266,7 @@ Explanation:
 (1 line)
 
 Features:
-(3 points)
+(3 bullet points)
 
 Implementation:
 (3 steps)
