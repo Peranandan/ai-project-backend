@@ -16,8 +16,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = os.getenv("ANTHROPIC_API_KEY")
-API_URL = "https://api.anthropic.com/v1/messages"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 SYSTEM_PROMPT = """You are an engineering project generator. Be concise and practical.
 
@@ -65,36 +65,53 @@ class ChatRequest(BaseModel):
 @app.post("/chat")
 def chat(request: ChatRequest):
     try:
+        if not GEMINI_API_KEY:
+            return {"success": False, "detail": "GEMINI_API_KEY not set in .env file"}
+
         headers = {
-            "x-api-key": API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
+            "Content-Type": "application/json"
         }
 
         body = {
-            "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 450,
-            "system": SYSTEM_PROMPT,
-            "messages": [
-                {"role": "user", "content": request.message}
-            ]
+            "system_instruction": {
+                "parts": [{"text": SYSTEM_PROMPT}]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": request.message}]
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 450,
+                "temperature": 0.7
+            }
         }
 
-        response = requests.post(API_URL, headers=headers, json=body)
+        response = requests.post(
+            f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+            headers=headers,
+            json=body,
+            timeout=30
+        )
+
         data = response.json()
 
         if response.status_code == 200:
-            text = data["content"][0]["text"]
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
             return {"success": True, "response": text}
 
-        elif response.status_code == 401:
-            return {"success": False, "detail": "Invalid API key. Check your .env file."}
+        elif response.status_code == 400:
+            return {"success": False, "detail": "Bad request. Check your input."}
+
+        elif response.status_code == 403:
+            return {"success": False, "detail": "Invalid API key. Check your GEMINI_API_KEY in .env file."}
 
         elif response.status_code == 429:
-            return {"success": False, "detail": "Rate limit reached. Try again shortly."}
+            return {"success": False, "detail": "Rate limit reached. Please wait and try again."}
 
         elif response.status_code == 500:
-            return {"success": False, "detail": "Anthropic server error. Try again."}
+            return {"success": False, "detail": "Gemini server error. Try again."}
 
         else:
             return {"success": False, "detail": f"API error {response.status_code}: {data}"}
