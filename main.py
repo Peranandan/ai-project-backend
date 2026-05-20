@@ -22,7 +22,7 @@ user_requests = {}
 
 
 # =====================================
-# INIT GEMINI LAZY (FIX)
+# INIT GEMINI LAZY
 # =====================================
 def get_model():
     global model, model_error
@@ -30,6 +30,7 @@ def get_model():
     if model is not None:
         return model
 
+    # ✅ FIXED: was os.getenv("") before
     api_key = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
     if not api_key:
@@ -40,7 +41,7 @@ def get_model():
         genai.configure(api_key=api_key)
 
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash-lite"
+            model_name="gemini-2.0-flash"
         )
 
         model_error = None
@@ -54,7 +55,7 @@ def get_model():
 # =====================================
 # LIMIT
 # =====================================
-def check_limit(ip):
+def check_limit(ip: str) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
 
     if ip not in user_requests:
@@ -76,10 +77,9 @@ def check_limit(ip):
 @app.get("/")
 def root():
     m = get_model()
-
     return {
         "message": "Backend Running 🚀",
-        "api_key_loaded": os.getenv("GEMINI_API_KEY") is not None,
+        "api_key_loaded": bool(os.getenv("GEMINI_API_KEY")),
         "model_loaded": m is not None,
         "model_error": model_error
     }
@@ -99,11 +99,31 @@ def env_check():
 
 
 # =====================================
+# USAGE INFO
+# =====================================
+@app.get("/usage")
+def usage(request: Request):
+    ip = request.client.host
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    if ip not in user_requests or user_requests[ip]["date"] != today:
+        used = 0
+    else:
+        used = user_requests[ip]["count"]
+
+    return {
+        "ip": ip,
+        "used": used,
+        "limit": DAILY_LIMIT,
+        "remaining": max(0, DAILY_LIMIT - used)
+    }
+
+
+# =====================================
 # GENERATE
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
-
     m = get_model()
 
     if m is None:
@@ -118,20 +138,32 @@ async def generate(request: Request, data: dict):
     if not check_limit(ip):
         return {
             "success": False,
-            "error": "Daily limit reached"
+            "error": f"Daily limit of {DAILY_LIMIT} requests reached. Try again tomorrow."
+        }
+
+    domain     = data.get("domain", "").strip()
+    technology = data.get("technology", "").strip()
+    level      = data.get("level", "").strip()
+
+    if not domain or not technology or not level:
+        return {
+            "success": False,
+            "error": "domain, technology, and level are all required."
         }
 
     prompt = f"""
-Domain: {data.get("domain","")}
-Technology: {data.get("technology","")}
-Level: {data.get("level","")}
+You are a technical mentor. Generate a structured learning resource.
 
-Generate:
+Domain: {domain}
+Technology: {technology}
+Level: {level}
+
+Respond with:
 - Title
-- Explanation
-- Features
-- Steps
-- Code
+- Explanation (2-3 sentences)
+- Key Features (3-5 bullet points)
+- Steps to Get Started (numbered list)
+- Sample Code (with comments)
 """
 
     try:
@@ -139,7 +171,7 @@ Generate:
             prompt,
             generation_config={
                 "temperature": 0.4,
-                "max_output_tokens": 300
+                "max_output_tokens": 800
             }
         )
 
