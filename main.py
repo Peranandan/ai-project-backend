@@ -28,13 +28,13 @@ async def lifespan(app: FastAPI):
 
     api_key = GEMINI_API_KEY.strip()
 
-    if not api_key or api_key == "AIzaSy...paste_your_key_here...":
+    if not api_key or api_key == "your_key_here":
         model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
         print(f"[STARTUP ERROR] {model_error}")
     else:
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite-preview-06-17")  # cheapest model
+            model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite-preview-06-17")
             model_error = None
             print("[STARTUP] Gemini model loaded ✅")
         except Exception as e:
@@ -130,6 +130,8 @@ async def generate(request: Request, data: dict):
             "error": f"Daily limit of {DAILY_LIMIT} requests reached. Try again tomorrow."
         }
 
+    # ✅ Fixed: was reading "department" but frontend was sending "domain"
+    # Now both frontend and backend use "department"
     department = data.get("department", "").strip()
     technology = data.get("technology", "").strip()
     level      = data.get("level", "").strip()
@@ -140,16 +142,25 @@ async def generate(request: Request, data: dict):
             "error": "department, technology, and level are all required."
         }
 
-    # Short and focused prompt = fewer input tokens
+    # ✅ Fixed: strict format prompt so parser always finds the section labels
+    # ✅ Kept max_output_tokens at 220 for cost optimization
     prompt = f"""Dept:{department} Tech:{technology} Level:{level}
-Give: Title, 1-line explanation, 3 features, 3 steps, tiny code snippet. Be very brief."""
+
+Reply in EXACTLY this format (be brief):
+Title: <5-word title>
+Explanation: <1 sentence>
+Features: 1.<f1> 2.<f2> 3.<f3>
+Implementation: 1.<s1> 2.<s2> 3.<s3>
+Code:
+<10-15 line snippet>
+"""
 
     try:
         response = model.generate_content(
             prompt,
             generation_config={
-                "temperature": 0.2,      # lower = less random = faster
-                "max_output_tokens": 220  # hard cap at 220 tokens
+                "temperature": 0.2,
+                "max_output_tokens": 220   # kept low for cost optimization
             }
         )
 
