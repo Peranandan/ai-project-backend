@@ -4,14 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 from datetime import datetime
 
-# =====================================
-# FASTAPI APP
-# =====================================
+# -------------------------
+# APP
+# -------------------------
 app = FastAPI()
 
-# =====================================
+# -------------------------
 # CORS
-# =====================================
+# -------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,23 +20,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =====================================
-# GEMINI API KEY (FIXED)
-# =====================================
-API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")  # ✅ FIXED
+# -------------------------
+# GEMINI API KEY
+# -------------------------
+API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 
-# =====================================
-# CONFIGURE GEMINI
-# =====================================
+# -------------------------
+# CONFIGURE GEMINI 2.5 FLASH LITE
+# -------------------------
 model = None
 
 if API_KEY:
     genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash")  # safer stable model
 
-# =====================================
-# DAILY LIMIT STORAGE
-# =====================================
+    model = genai.GenerativeModel(
+        model_name="gemini-2.5-flash-lite"
+    )
+
+# -------------------------
+# DAILY LIMIT SYSTEM
+# -------------------------
 user_requests = {}
 DAILY_LIMIT = 5
 
@@ -57,20 +60,21 @@ def check_limit(ip):
     return True
 
 
-# =====================================
-# ROOT ROUTE
-# =====================================
+# -------------------------
+# ROOT
+# -------------------------
 @app.get("/")
-async def root():
+def root():
     return {
         "message": "Backend Running 🚀",
-        "api_key_loaded": API_KEY is not None
+        "api_key_loaded": API_KEY is not None,
+        "model": "gemini-2.5-flash-lite"
     }
 
 
-# =====================================
-# GENERATE ROUTE
-# =====================================
+# -------------------------
+# GENERATE
+# -------------------------
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
@@ -85,7 +89,7 @@ async def generate(request: Request, data: dict):
     if not check_limit(ip):
         return {
             "success": False,
-            "error": "Daily limit reached. Try again after 24 hours."
+            "error": "Daily limit reached"
         }
 
     domain = data.get("domain", "")
@@ -98,28 +102,28 @@ Technology: {technology}
 Level: {level}
 
 Generate:
-- Title
+- Project Title
 - Explanation
 - Features
-- Implementation steps
-- Sample code
+- Step-by-step implementation
+- Code example
 
-Keep response short and structured.
+Keep it short and structured.
 """
 
     try:
         response = model.generate_content(
             prompt,
             generation_config={
-                "max_output_tokens": 220,
-                "temperature": 0.4
+                "temperature": 0.4,
+                "max_output_tokens": 300
             }
         )
 
         return {
             "success": True,
-            "remaining_requests": DAILY_LIMIT - user_requests[ip]["count"],
-            "result": response.text
+            "result": response.text,
+            "remaining_requests": DAILY_LIMIT - user_requests[ip]["count"]
         }
 
     except Exception as e:
