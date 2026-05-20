@@ -26,7 +26,7 @@ app.add_middleware(
 API_KEY = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
 # =====================================
-# GEMINI CONFIG (ONLY 2.5 FLASH LITE)
+# GEMINI SETUP (IMPORTANT FIX)
 # =====================================
 model = None
 model_error = None
@@ -35,6 +35,7 @@ if API_KEY:
     try:
         genai.configure(api_key=API_KEY)
 
+        # IMPORTANT: force correct model init
         model = genai.GenerativeModel(
             model_name="gemini-2.5-flash-lite"
         )
@@ -80,7 +81,7 @@ def root():
 
 
 # =====================================
-# DEBUG
+# DEBUG ENDPOINT
 # =====================================
 @app.get("/env-check")
 def env_check():
@@ -93,7 +94,7 @@ def env_check():
 
 
 # =====================================
-# GENERATE
+# GENERATE ENDPOINT
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
@@ -101,7 +102,7 @@ async def generate(request: Request, data: dict):
     if model is None:
         return {
             "success": False,
-            "error": "Gemini 2.5 Flash Lite failed to load",
+            "error": "Gemini model failed to load",
             "details": model_error
         }
 
