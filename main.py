@@ -16,11 +16,11 @@ user_requests = {}
 # =====================================
 # PASTE YOUR GEMINI API KEY HERE
 # =====================================
-GEMINI_API_KEY = "AIzaSy...paste_your_key_here..."
+GEMINI_API_KEY = "AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho"
 
 
 # =====================================
-# STARTUP — init model when app boots
+# STARTUP
 # =====================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,13 +28,13 @@ async def lifespan(app: FastAPI):
 
     api_key = GEMINI_API_KEY.strip()
 
-    if not api_key or api_key == "AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho":
+    if not api_key or api_key == "AIzaSy...paste_your_key_here...":
         model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
         print(f"[STARTUP ERROR] {model_error}")
     else:
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name="gemini-2.0-flash")
+            model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite-preview-06-17")  # cheapest model
             model_error = None
             print("[STARTUP] Gemini model loaded ✅")
         except Exception as e:
@@ -130,37 +130,26 @@ async def generate(request: Request, data: dict):
             "error": f"Daily limit of {DAILY_LIMIT} requests reached. Try again tomorrow."
         }
 
-    domain     = data.get("domain", "").strip()
+    department = data.get("department", "").strip()
     technology = data.get("technology", "").strip()
     level      = data.get("level", "").strip()
 
-    if not domain or not technology or not level:
+    if not department or not technology or not level:
         return {
             "success": False,
-            "error": "domain, technology, and level are all required."
+            "error": "department, technology, and level are all required."
         }
 
-    prompt = f"""
-You are a technical mentor. Generate a structured learning resource.
-
-Domain: {domain}
-Technology: {technology}
-Level: {level}
-
-Respond with:
-- Title
-- Explanation (2-3 sentences)
-- Key Features (3-5 bullet points)
-- Steps to Get Started (numbered list)
-- Sample Code (with comments)
-"""
+    # Short and focused prompt = fewer input tokens
+    prompt = f"""Dept:{department} Tech:{technology} Level:{level}
+Give: Title, 1-line explanation, 3 features, 3 steps, tiny code snippet. Be very brief."""
 
     try:
         response = model.generate_content(
             prompt,
             generation_config={
-                "temperature": 0.4,
-                "max_output_tokens": 800
+                "temperature": 0.2,      # lower = less random = faster
+                "max_output_tokens": 220  # hard cap at 220 tokens
             }
         )
 
