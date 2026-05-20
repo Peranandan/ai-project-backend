@@ -3,20 +3,13 @@ import hashlib
 
 from datetime import datetime
 
-from dotenv import load_dotenv
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import google.generativeai as genai
 
 # =========================
-# LOAD ENV
-# =========================
-load_dotenv()
-
-# =========================
-# API KEY
+# ENV CONFIG
 # =========================
 GEMINI_API_KEY = os.getenv(
     "GEMINI_API_KEY",
@@ -24,10 +17,19 @@ GEMINI_API_KEY = os.getenv(
 ).strip()
 
 # =========================
-# GEMINI SETUP
+# GLOBALS
 # =========================
 model = None
 
+user_requests = {}
+
+cache = {}
+
+DAILY_LIMIT = 5
+
+# =========================
+# INIT GEMINI
+# =========================
 if GEMINI_API_KEY:
 
     genai.configure(
@@ -35,7 +37,17 @@ if GEMINI_API_KEY:
     )
 
     model = genai.GenerativeModel(
-        "gemini-1.5-flash"
+        model_name="gemini-1.5-flash-latest"
+    )
+
+    print(
+        "Gemini Loaded Successfully"
+    )
+
+else:
+
+    print(
+        "GEMINI_API_KEY not found"
     )
 
 # =========================
@@ -60,18 +72,6 @@ app.add_middleware(
 
 # =========================
 # RATE LIMIT
-# =========================
-DAILY_LIMIT = 5
-
-user_requests = {}
-
-# =========================
-# CACHE
-# =========================
-cache = {}
-
-# =========================
-# CHECK LIMIT
 # =========================
 def check_limit(ip):
 
@@ -110,27 +110,25 @@ def check_limit(ip):
 # =========================
 # CACHE KEY
 # =========================
-def generate_cache_key(
-    department,
-    technology,
+def get_cache_key(
+    dept,
+    tech,
     level
 ):
 
     raw = (
-        f"{department}-"
-        f"{technology}-"
-        f"{level}"
-    )
+        f"{dept}-{tech}-{level}"
+    ).lower().strip()
 
     return hashlib.md5(
-        raw.lower().encode()
+        raw.encode()
     ).hexdigest()
 
 # =========================
 # ROOT
 # =========================
 @app.get("/")
-async def root():
+def root():
 
     return {
 
@@ -153,97 +151,101 @@ async def generate(
     data: dict
 ):
 
-    try:
+    # =====================
+    # MODEL CHECK
+    # =====================
+    if model is None:
 
-        # =====================
-        # MODEL CHECK
-        # =====================
-        if model is None:
+        return {
 
-            return {
-                "success": False,
-                "error":
-                "Gemini API key missing"
-            }
+            "success": False,
 
-        # =====================
-        # USER IP
-        # =====================
-        ip = request.client.host
+            "error":
+            "Gemini model not loaded"
+        }
 
-        # =====================
-        # DAILY LIMIT
-        # =====================
-        if not check_limit(ip):
+    # =====================
+    # USER IP
+    # =====================
+    ip = request.client.host
 
-            return {
-                "success": False,
-                "error":
-                "Daily limit reached"
-            }
+    # =====================
+    # LIMIT CHECK
+    # =====================
+    if not check_limit(ip):
 
-        # =====================
-        # INPUT DATA
-        # =====================
-        department = data.get(
-            "department",
-            ""
-        ).strip()
+        return {
 
-        technology = data.get(
-            "technology",
-            ""
-        ).strip()
+            "success": False,
 
-        level = data.get(
-            "level",
-            ""
-        ).strip()
+            "error":
+            "Daily limit reached"
+        }
 
-        # =====================
-        # VALIDATION
-        # =====================
-        if (
-            not department or
-            not technology or
-            not level
-        ):
+    # =====================
+    # INPUTS
+    # =====================
+    department = data.get(
+        "department",
+        ""
+    ).strip()
 
-            return {
-                "success": False,
-                "error":
-                "Missing fields"
-            }
+    technology = data.get(
+        "technology",
+        ""
+    ).strip()
 
-        # =====================
-        # CACHE KEY
-        # =====================
-        cache_key = generate_cache_key(
-            department,
-            technology,
-            level
-        )
+    level = data.get(
+        "level",
+        ""
+    ).strip()
 
-        # =====================
-        # RETURN CACHE
-        # =====================
-        if cache_key in cache:
+    # =====================
+    # VALIDATION
+    # =====================
+    if (
+        not department or
+        not technology or
+        not level
+    ):
 
-            return {
+        return {
 
-                "success": True,
+            "success": False,
 
-                "cached": True,
+            "error":
+            "Missing fields"
+        }
 
-                "result":
-                cache[cache_key]
-            }
+    # =====================
+    # CACHE KEY
+    # =====================
+    cache_key = get_cache_key(
+        department,
+        technology,
+        level
+    )
 
-        # =====================
-        # PROMPT
-        # =====================
-        prompt = f"""
-Generate an engineering project.
+    # =====================
+    # RETURN CACHE
+    # =====================
+    if cache_key in cache:
+
+        return {
+
+            "success": True,
+
+            "cached": True,
+
+            "result":
+            cache[cache_key]
+        }
+
+    # =====================
+    # PROMPT
+    # =====================
+    prompt = f"""
+Generate a project idea.
 
 Department:
 {department}
@@ -263,7 +265,7 @@ Explanation:
 (1 line)
 
 Features:
-(3 bullet points)
+(3 points)
 
 Implementation:
 (3 steps)
@@ -272,24 +274,28 @@ Code:
 (10 lines max)
 """
 
-        # =====================
-        # GEMINI REQUEST
-        # =====================
+    # =====================
+    # GEMINI REQUEST
+    # =====================
+    try:
+
         response = model.generate_content(
+
             prompt,
+
             generation_config={
 
                 "temperature": 0.2,
 
-                "max_output_tokens": 250
+                "max_output_tokens": 180
             }
         )
 
         result = response.text
 
-        # =====================
+        # =================
         # SAVE CACHE
-        # =====================
+        # =================
         cache[cache_key] = result
 
         return {
@@ -301,6 +307,9 @@ Code:
             "result": result
         }
 
+    # =====================
+    # ERROR
+    # =====================
     except Exception as e:
 
         return {
