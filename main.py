@@ -4,14 +4,14 @@ from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 from datetime import datetime
 
-# -------------------------
+# =====================================
 # APP
-# -------------------------
-app = FastAPI()
+# =====================================
+app = FastAPI(title="AI Project Generator")
 
-# -------------------------
+# =====================================
 # CORS
-# -------------------------
+# =====================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,14 +20,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -------------------------
-# GEMINI API KEY
-# -------------------------
+# =====================================
+# GEMINI API KEY (RENDER ENV)
+# =====================================
 API_KEY = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
-# -------------------------
-# CONFIGURE GEMINI 2.5 FLASH LITE
-# -------------------------
+# =====================================
+# CONFIGURE GEMINI
+# =====================================
 model = None
 
 if API_KEY:
@@ -37,9 +37,9 @@ if API_KEY:
         model_name="gemini-2.5-flash-lite"
     )
 
-# -------------------------
-# DAILY LIMIT SYSTEM
-# -------------------------
+# =====================================
+# DAILY LIMIT
+# =====================================
 user_requests = {}
 DAILY_LIMIT = 5
 
@@ -60,28 +60,40 @@ def check_limit(ip):
     return True
 
 
-# -------------------------
+# =====================================
 # ROOT
-# -------------------------
+# =====================================
 @app.get("/")
 def root():
     return {
         "message": "Backend Running 🚀",
         "api_key_loaded": API_KEY is not None,
-        "model": "gemini-2.5-flash-lite"
+        "model_loaded": model is not None
     }
 
 
-# -------------------------
-# GENERATE
-# -------------------------
+# =====================================
+# DEBUG (IMPORTANT)
+# =====================================
+@app.get("/env-check")
+def env_check():
+    return {
+        "GEMINI_API_KEY_in_env": "GEMINI_API_KEY" in os.environ,
+        "GEMINI_API_KEY_value": os.getenv("GEMINI_API_KEY"),
+        "GEMINI_API_KEY_loaded": bool(API_KEY)
+    }
+
+
+# =====================================
+# GENERATE ROUTE
+# =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
     if model is None:
         return {
             "success": False,
-            "error": "GEMINI_API_KEY missing in Render environment variables"
+            "error": "GEMINI_API_KEY not found in Render environment variables"
         }
 
     ip = request.client.host
@@ -105,10 +117,10 @@ Generate:
 - Project Title
 - Explanation
 - Features
-- Step-by-step implementation
-- Code example
+- Steps
+- Code
 
-Keep it short and structured.
+Keep response short and structured.
 """
 
     try:
