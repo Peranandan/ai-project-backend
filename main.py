@@ -23,7 +23,7 @@ app.add_middleware(
 # -------------------------
 # GEMINI API KEY
 # -------------------------
-API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
+API_KEY = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
 # -------------------------
 # CONFIGURE GEMINI 2.5 FLASH LITE
