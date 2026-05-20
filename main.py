@@ -4,14 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 from datetime import datetime
 
-# =====================================
-# APP
-# =====================================
-app = FastAPI(title="AI Project Generator")
+app = FastAPI()
 
-# =====================================
-# CORS
-# =====================================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,27 +14,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =====================================
-# GLOBALS
-# =====================================
 model = None
 model_error = None
 
 DAILY_LIMIT = 5
 user_requests = {}
 
+
 # =====================================
-# INIT GEMINI (SAFE RUNTIME LOAD)
+# INIT GEMINI LAZY (FIX)
 # =====================================
-def init_gemini():
+def get_model():
     global model, model_error
+
+    if model is not None:
+        return model
 
     api_key = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
     if not api_key:
-        model_error = "GEMINI_API_KEY not found in environment"
-        model = None
-        return
+        model_error = "GEMINI_API_KEY missing in environment"
+        return None
 
     try:
         genai.configure(api_key=api_key)
@@ -50,20 +44,15 @@ def init_gemini():
         )
 
         model_error = None
+        return model
 
     except Exception as e:
-        model = None
         model_error = str(e)
-
-
-# Run on startup (IMPORTANT FIX)
-@app.on_event("startup")
-def startup_event():
-    init_gemini()
+        return None
 
 
 # =====================================
-# LIMIT CHECK
+# LIMIT
 # =====================================
 def check_limit(ip):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -86,10 +75,12 @@ def check_limit(ip):
 # =====================================
 @app.get("/")
 def root():
+    m = get_model()
+
     return {
         "message": "Backend Running 🚀",
         "api_key_loaded": os.getenv("GEMINI_API_KEY") is not None,
-        "model_loaded": model is not None,
+        "model_loaded": m is not None,
         "model_error": model_error
     }
 
@@ -113,7 +104,9 @@ def env_check():
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
-    if model is None:
+    m = get_model()
+
+    if m is None:
         return {
             "success": False,
             "error": "Gemini model not initialized",
@@ -128,27 +121,21 @@ async def generate(request: Request, data: dict):
             "error": "Daily limit reached"
         }
 
-    domain = data.get("domain", "")
-    technology = data.get("technology", "")
-    level = data.get("level", "")
-
     prompt = f"""
-Domain: {domain}
-Technology: {technology}
-Level: {level}
+Domain: {data.get("domain","")}
+Technology: {data.get("technology","")}
+Level: {data.get("level","")}
 
 Generate:
-- Project Title
+- Title
 - Explanation
 - Features
 - Steps
 - Code
-
-Keep it short and structured.
 """
 
     try:
-        response = model.generate_content(
+        response = m.generate_content(
             prompt,
             generation_config={
                 "temperature": 0.4,
@@ -158,8 +145,7 @@ Keep it short and structured.
 
         return {
             "success": True,
-            "result": response.text,
-            "remaining_requests": DAILY_LIMIT - user_requests[ip]["count"]
+            "result": response.text
         }
 
     except Exception as e:
