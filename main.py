@@ -1,321 +1,104 @@
 import os
-import hashlib
-
-from datetime import datetime
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-
+from pydantic import BaseModel
+from dotenv import load_dotenv
 import google.generativeai as genai
 
-# =========================
-# ENV CONFIG
-# =========================
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY",
-    ""
-).strip()
+# ----------------------------
+# Load environment variables
+# ----------------------------
+load_dotenv()
 
-# =========================
-# GLOBALS
-# =========================
-model = None
+API_KEY = os.getenv("GOOGLE_API_KEY")
 
-user_requests = {}
+if not API_KEY:
+    raise ValueError("GOOGLE_API_KEY not found in environment variables")
 
-cache = {}
+# ----------------------------
+# Configure Gemini
+# ----------------------------
+genai.configure(api_key=API_KEY)
 
-DAILY_LIMIT = 5
+# ⚠️ Gemini 2.5 Flash Lite model
+model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
-# =========================
-# INIT GEMINI
-# =========================
-if GEMINI_API_KEY:
+# ----------------------------
+# FastAPI app
+# ----------------------------
+app = FastAPI(
+    title="Gemini 2.5 Flash Lite API",
+    description="FastAPI backend using Google Gemini 2.5 Flash Lite",
+    version="1.0.0"
+)
 
-    genai.configure(
-        api_key=GEMINI_API_KEY
-    )
-
-    # ✅ WORKING MODEL
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash"
-    )
-
-    print(
-        "Gemini Loaded Successfully"
-    )
-
-else:
-
-    print(
-        "GEMINI_API_KEY not found"
-    )
-
-# =========================
-# FASTAPI APP
-# =========================
-app = FastAPI()
-
-# =========================
-# CORS
-# =========================
+# ----------------------------
+# CORS (important for Vercel / frontend)
+# ----------------------------
 app.add_middleware(
     CORSMiddleware,
-
-    allow_origins=["*"],
-
+    allow_origins=["*"],  # change this in production
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
-# =========================
-# RATE LIMIT
-# =========================
-def check_limit(ip):
+# ----------------------------
+# Request schema
+# ----------------------------
+class ChatRequest(BaseModel):
+    message: str
 
-    today = datetime.now().strftime(
-        "%Y-%m-%d"
-    )
-
-    if ip not in user_requests:
-
-        user_requests[ip] = {
-            "date": today,
-            "count": 0
-        }
-
-    if (
-        user_requests[ip]["date"]
-        != today
-    ):
-
-        user_requests[ip] = {
-            "date": today,
-            "count": 0
-        }
-
-    if (
-        user_requests[ip]["count"]
-        >= DAILY_LIMIT
-    ):
-
-        return False
-
-    user_requests[ip]["count"] += 1
-
-    return True
-
-# =========================
-# CACHE KEY
-# =========================
-def get_cache_key(
-    dept,
-    tech,
-    level
-):
-
-    raw = (
-        f"{dept}-{tech}-{level}"
-    ).lower().strip()
-
-    return hashlib.md5(
-        raw.encode()
-    ).hexdigest()
-
-# =========================
-# ROOT
-# =========================
+# ----------------------------
+# Health check route
+# ----------------------------
 @app.get("/")
 def root():
-
     return {
-
-        "message":
-        "Backend Running 🚀",
-
-        "model_loaded":
-        model is not None,
-
-        "cache_size":
-        len(cache)
+        "status": "running",
+        "model": "gemini-2.5-flash-lite"
     }
 
-# =========================
-# GENERATE
-# =========================
-@app.post("/generate")
-async def generate(
-    request: Request,
-    data: dict
-):
-
-    # =====================
-    # MODEL CHECK
-    # =====================
-    if model is None:
-
-        return {
-
-            "success": False,
-
-            "error":
-            "Gemini model not loaded"
-        }
-
-    # =====================
-    # USER IP
-    # =====================
-    ip = request.client.host
-
-    # =====================
-    # LIMIT CHECK
-    # =====================
-    if not check_limit(ip):
-
-        return {
-
-            "success": False,
-
-            "error":
-            "Daily limit reached"
-        }
-
-    # =====================
-    # INPUTS
-    # =====================
-    department = data.get(
-        "department",
-        ""
-    ).strip()
-
-    technology = data.get(
-        "technology",
-        ""
-    ).strip()
-
-    level = data.get(
-        "level",
-        ""
-    ).strip()
-
-    # =====================
-    # VALIDATION
-    # =====================
-    if (
-        not department or
-        not technology or
-        not level
-    ):
-
-        return {
-
-            "success": False,
-
-            "error":
-            "Missing fields"
-        }
-
-    # =====================
-    # CACHE KEY
-    # =====================
-    cache_key = get_cache_key(
-        department,
-        technology,
-        level
-    )
-
-    # =====================
-    # RETURN CACHE
-    # =====================
-    if cache_key in cache:
-
-        return {
-
-            "success": True,
-
-            "cached": True,
-
-            "result":
-            cache[cache_key]
-        }
-
-    # =====================
-    # PROMPT
-    # =====================
-    prompt = f"""
-Generate a project idea.
-
-Department:
-{department}
-
-Technology:
-{technology}
-
-Difficulty:
-{level}
-
-Return format:
-
-Title:
-(5 words max)
-
-Explanation:
-(1 line)
-
-Features:
-(3 bullet points)
-
-Implementation:
-(3 steps)
-
-Code:
-(10 lines max)
-"""
-
-    # =====================
-    # GEMINI REQUEST
-    # =====================
+# ----------------------------
+# Chat endpoint
+# ----------------------------
+@app.post("/chat")
+def chat(req: ChatRequest):
     try:
+        if not req.message.strip():
+            raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-        response = model.generate_content(
+        response = model.generate_content(req.message)
 
-            prompt,
+        return {
+            "success": True,
+            "input": req.message,
+            "response": response.text
+        }
 
-            generation_config={
-
-                "temperature": 0.2,
-
-                "max_output_tokens": 180
-            }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
         )
 
-        result = response.text
+# ----------------------------
+# Optional: streaming endpoint (basic simulation)
+# ----------------------------
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    try:
+        response = model.generate_content(req.message, stream=True)
 
-        # =================
-        # SAVE CACHE
-        # =================
-        cache[cache_key] = result
+        full_text = ""
+        for chunk in response:
+            if chunk.text:
+                full_text += chunk.text
 
         return {
-
             "success": True,
-
-            "cached": False,
-
-            "result": result
+            "response": full_text
         }
 
-    # =====================
-    # ERROR
-    # =====================
     except Exception as e:
-
-        return {
-
-            "success": False,
-
-            "error": str(e)
-        }
+        raise HTTPException(status_code=500, detail=str(e))
