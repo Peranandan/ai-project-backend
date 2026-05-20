@@ -13,6 +13,11 @@ model_error = None
 DAILY_LIMIT = 5
 user_requests = {}
 
+# =====================================
+# PASTE YOUR GEMINI API KEY HERE
+# =====================================
+GEMINI_API_KEY = "AIzaSy...paste_your_key_here..."
+
 
 # =====================================
 # STARTUP — init model when app boots
@@ -21,10 +26,10 @@ user_requests = {}
 async def lifespan(app: FastAPI):
     global model, model_error
 
-    api_key = os.environ.get("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho", "").strip()
+    api_key = GEMINI_API_KEY.strip()
 
-    if not api_key:
-        model_error = "GEMINI_API_KEY missing in environment"
+    if not api_key or api_key == "AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho":
+        model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
         print(f"[STARTUP ERROR] {model_error}")
     else:
         try:
@@ -36,7 +41,7 @@ async def lifespan(app: FastAPI):
             model_error = str(e)
             print(f"[STARTUP ERROR] {model_error}")
 
-    yield  # app runs here
+    yield
 
 
 # =====================================
@@ -79,20 +84,6 @@ def check_limit(ip: str) -> bool:
 def root():
     return {
         "message": "Backend Running 🚀",
-        "api_key_loaded": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
-        "model_loaded": model is not None,
-        "model_error": model_error
-    }
-
-
-# =====================================
-# DEBUG
-# =====================================
-@app.get("/env-check")
-def env_check():
-    return {
-        "GEMINI_API_KEY_in_env": "GEMINI_API_KEY" in os.environ,
-        "GEMINI_API_KEY_loaded": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
         "model_loaded": model is not None,
         "model_error": model_error
     }
