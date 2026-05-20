@@ -14,9 +14,9 @@ DAILY_LIMIT = 5
 user_requests = {}
 
 # =====================================
-# API KEY (DO NOT HARD CODE IN PROD)
+# GEMINI API KEY
 # =====================================
-GEMINI_API_KEY = os.getenv("AIzaSyBO8zuFTURp_fSX72cUqVWUDCeoeYbXVX4")
+GEMINI_API_KEY = "AIzaSyBO8zuFTURp_fSX72cUqVWUDCeoeYbXVX4"
 
 
 # =====================================
@@ -26,26 +26,24 @@ GEMINI_API_KEY = os.getenv("AIzaSyBO8zuFTURp_fSX72cUqVWUDCeoeYbXVX4")
 async def lifespan(app: FastAPI):
     global model, model_error
 
-    api_key = (GEMINI_API_KEY or "").strip()
+    api_key = GEMINI_API_KEY.strip()
 
-    if not api_key:
-        model_error = "Missing GEMINI_API_KEY"
-        print("[ERROR]", model_error)
+    if not api_key or api_key == "your_key_here":
+        model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
+        print(f"[STARTUP ERROR] {model_error}")
     else:
         try:
             genai.configure(api_key=api_key)
 
-            # ✅ COST OPTIMIZED + WORKING MODEL
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash"
-            )
+            # ✅ FIXED MODEL (COST OPTIMIZED)
+            model = genai.GenerativeModel(model_name="gemini-1.5-flash")
 
             model_error = None
-            print("[STARTUP] Gemini loaded successfully ✅")
+            print("[STARTUP] Gemini model loaded ✅")
 
         except Exception as e:
             model_error = str(e)
-            print("[STARTUP ERROR]", model_error)
+            print(f"[STARTUP ERROR] {model_error}")
 
     yield
 
@@ -103,9 +101,13 @@ def usage(request: Request):
     ip = request.client.host
     today = datetime.now().strftime("%Y-%m-%d")
 
-    used = user_requests.get(ip, {}).get("count", 0)
+    if ip not in user_requests or user_requests[ip]["date"] != today:
+        used = 0
+    else:
+        used = user_requests[ip]["count"]
 
     return {
+        "ip": ip,
         "used": used,
         "limit": DAILY_LIMIT,
         "remaining": max(0, DAILY_LIMIT - used)
@@ -121,7 +123,7 @@ async def generate(request: Request, data: dict):
     if model is None:
         return {
             "success": False,
-            "error": "Model not loaded",
+            "error": "Gemini model not initialized",
             "details": model_error
         }
 
@@ -130,24 +132,31 @@ async def generate(request: Request, data: dict):
     if not check_limit(ip):
         return {
             "success": False,
-            "error": "Daily limit reached"
+            "error": f"Daily limit of {DAILY_LIMIT} requests reached."
         }
 
-    department = data.get("department", "")
-    technology = data.get("technology", "")
-    level = data.get("level", "")
+    department = data.get("department", "").strip()
+    technology = data.get("technology", "").strip()
+    level = data.get("level", "").strip()
+
+    if not department or not technology or not level:
+        return {
+            "success": False,
+            "error": "department, technology, and level are required."
+        }
 
     prompt = f"""
 Dept:{department}
 Tech:{technology}
 Level:{level}
 
-Return:
-Title (5 words)
-Explanation (1 line)
-Features (3 points)
-Steps (3 points)
-Code (10-15 lines)
+Reply in this format:
+Title: short title
+Explanation: one line
+Features: 1.. 2.. 3..
+Implementation: 1.. 2.. 3..
+Code:
+10-15 lines simple code
 """
 
     try:
