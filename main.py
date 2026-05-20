@@ -8,20 +8,18 @@ import google.generativeai as genai
 from datetime import datetime
 
 # =========================
-# GET GEMINI API KEY
+# GEMINI API KEY
 # =========================
-API_KEY = os.getenv("GEMINI_API_KEY")
+API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 
-# CHECK KEY
-if API_KEY is None or API_KEY == "":
-    raise Exception(
-        "GEMINI_API_KEY missing in Render Environment Variables"
-    )
+# CHECK API KEY
+if not API_KEY:
+    raise Exception("GEMINI_API_KEY missing")
 
 # CONFIGURE GEMINI
 genai.configure(api_key=API_KEY)
 
-# MODEL
+# GEMINI MODEL
 model = genai.GenerativeModel(
     "gemini-2.5-flash-lite"
 )
@@ -85,7 +83,7 @@ def check_limit(ip):
 
 
 # =========================
-# ROOT
+# ROOT API
 # =========================
 @app.get("/")
 async def root():
@@ -96,7 +94,7 @@ async def root():
 
 
 # =========================
-# GENERATE
+# GENERATE API
 # =========================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
@@ -136,6 +134,7 @@ Short concise response only.
 
     try:
 
+        # GEMINI RESPONSE
         response = model.generate_content(
             prompt,
 
@@ -146,6 +145,7 @@ Short concise response only.
         )
 
         return {
+
             "success": True,
 
             "remaining_requests":
