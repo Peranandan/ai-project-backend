@@ -1,10 +1,48 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import google.generativeai as genai
 from datetime import datetime
 
-app = FastAPI()
+# =====================================
+# GLOBALS
+# =====================================
+model = None
+model_error = None
+DAILY_LIMIT = 5
+user_requests = {}
+
+
+# =====================================
+# STARTUP — init model when app boots
+# =====================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global model, model_error
+
+    api_key = os.environ.get("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho", "").strip()
+
+    if not api_key:
+        model_error = "GEMINI_API_KEY missing in environment"
+        print(f"[STARTUP ERROR] {model_error}")
+    else:
+        try:
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(model_name="gemini-2.0-flash")
+            model_error = None
+            print("[STARTUP] Gemini model loaded ✅")
+        except Exception as e:
+            model_error = str(e)
+            print(f"[STARTUP ERROR] {model_error}")
+
+    yield  # app runs here
+
+
+# =====================================
+# APP
+# =====================================
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,46 +52,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-model = None
-model_error = None
-
-DAILY_LIMIT = 5
-user_requests = {}
-
 
 # =====================================
-# INIT GEMINI LAZY
-# =====================================
-def get_model():
-    global model, model_error
-
-    if model is not None:
-        return model
-
-    # ✅ FIXED: was os.getenv("") before
-    api_key = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
-
-    if not api_key:
-        model_error = "GEMINI_API_KEY missing in environment"
-        return None
-
-    try:
-        genai.configure(api_key=api_key)
-
-        model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash"
-        )
-
-        model_error = None
-        return model
-
-    except Exception as e:
-        model_error = str(e)
-        return None
-
-
-# =====================================
-# LIMIT
+# RATE LIMIT
 # =====================================
 def check_limit(ip: str) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
@@ -76,11 +77,10 @@ def check_limit(ip: str) -> bool:
 # =====================================
 @app.get("/")
 def root():
-    m = get_model()
     return {
         "message": "Backend Running 🚀",
-        "api_key_loaded": bool(os.getenv("GEMINI_API_KEY")),
-        "model_loaded": m is not None,
+        "api_key_loaded": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+        "model_loaded": model is not None,
         "model_error": model_error
     }
 
@@ -92,14 +92,14 @@ def root():
 def env_check():
     return {
         "GEMINI_API_KEY_in_env": "GEMINI_API_KEY" in os.environ,
-        "GEMINI_API_KEY_loaded": bool(os.getenv("GEMINI_API_KEY")),
+        "GEMINI_API_KEY_loaded": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
         "model_loaded": model is not None,
         "model_error": model_error
     }
 
 
 # =====================================
-# USAGE INFO
+# USAGE
 # =====================================
 @app.get("/usage")
 def usage(request: Request):
@@ -124,9 +124,7 @@ def usage(request: Request):
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
-    m = get_model()
-
-    if m is None:
+    if model is None:
         return {
             "success": False,
             "error": "Gemini model not initialized",
@@ -167,7 +165,7 @@ Respond with:
 """
 
     try:
-        response = m.generate_content(
+        response = model.generate_content(
             prompt,
             generation_config={
                 "temperature": 0.4,
