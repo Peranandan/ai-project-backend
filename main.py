@@ -14,9 +14,9 @@ DAILY_LIMIT = 5
 user_requests = {}
 
 # =====================================
-# PASTE YOUR GEMINI API KEY HERE
+# API KEY (DO NOT HARD CODE IN PROD)
 # =====================================
-GEMINI_API_KEY = "AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho"
+GEMINI_API_KEY = os.getenv("AIzaSyBO8zuFTURp_fSX72cUqVWUDCeoeYbXVX4")
 
 
 # =====================================
@@ -26,20 +26,26 @@ GEMINI_API_KEY = "AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho"
 async def lifespan(app: FastAPI):
     global model, model_error
 
-    api_key = GEMINI_API_KEY.strip()
+    api_key = (GEMINI_API_KEY or "").strip()
 
-    if not api_key or api_key == "your_key_here":
-        model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
-        print(f"[STARTUP ERROR] {model_error}")
+    if not api_key:
+        model_error = "Missing GEMINI_API_KEY"
+        print("[ERROR]", model_error)
     else:
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(model_name="gemini-2.5-flash-lite-preview-06-17")
+
+            # ✅ COST OPTIMIZED + WORKING MODEL
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash"
+            )
+
             model_error = None
-            print("[STARTUP] Gemini model loaded ✅")
+            print("[STARTUP] Gemini loaded successfully ✅")
+
         except Exception as e:
             model_error = str(e)
-            print(f"[STARTUP ERROR] {model_error}")
+            print("[STARTUP ERROR]", model_error)
 
     yield
 
@@ -97,13 +103,9 @@ def usage(request: Request):
     ip = request.client.host
     today = datetime.now().strftime("%Y-%m-%d")
 
-    if ip not in user_requests or user_requests[ip]["date"] != today:
-        used = 0
-    else:
-        used = user_requests[ip]["count"]
+    used = user_requests.get(ip, {}).get("count", 0)
 
     return {
-        "ip": ip,
         "used": used,
         "limit": DAILY_LIMIT,
         "remaining": max(0, DAILY_LIMIT - used)
@@ -115,10 +117,11 @@ def usage(request: Request):
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
+
     if model is None:
         return {
             "success": False,
-            "error": "Gemini model not initialized",
+            "error": "Model not loaded",
             "details": model_error
         }
 
@@ -127,32 +130,24 @@ async def generate(request: Request, data: dict):
     if not check_limit(ip):
         return {
             "success": False,
-            "error": f"Daily limit of {DAILY_LIMIT} requests reached. Try again tomorrow."
+            "error": "Daily limit reached"
         }
 
-    # ✅ Fixed: was reading "department" but frontend was sending "domain"
-    # Now both frontend and backend use "department"
-    department = data.get("department", "").strip()
-    technology = data.get("technology", "").strip()
-    level      = data.get("level", "").strip()
+    department = data.get("department", "")
+    technology = data.get("technology", "")
+    level = data.get("level", "")
 
-    if not department or not technology or not level:
-        return {
-            "success": False,
-            "error": "department, technology, and level are all required."
-        }
+    prompt = f"""
+Dept:{department}
+Tech:{technology}
+Level:{level}
 
-    # ✅ Fixed: strict format prompt so parser always finds the section labels
-    # ✅ Kept max_output_tokens at 220 for cost optimization
-    prompt = f"""Dept:{department} Tech:{technology} Level:{level}
-
-Reply in EXACTLY this format (be brief):
-Title: <5-word title>
-Explanation: <1 sentence>
-Features: 1.<f1> 2.<f2> 3.<f3>
-Implementation: 1.<s1> 2.<s2> 3.<s3>
-Code:
-<10-15 line snippet>
+Return:
+Title (5 words)
+Explanation (1 line)
+Features (3 points)
+Steps (3 points)
+Code (10-15 lines)
 """
 
     try:
@@ -160,7 +155,7 @@ Code:
             prompt,
             generation_config={
                 "temperature": 0.2,
-                "max_output_tokens": 220   # kept low for cost optimization
+                "max_output_tokens": 220
             }
         )
 
