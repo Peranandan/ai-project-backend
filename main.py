@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import anthropic
+import requests
 import os
 
 load_dotenv()
@@ -16,7 +16,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+API_KEY = os.getenv("ANTHROPIC_API_KEY")
+API_URL = "https://api.anthropic.com/v1/messages"
 
 SYSTEM_PROMPT = """You are an engineering project generator. Be concise and practical.
 
@@ -62,47 +63,50 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+def chat(request: ChatRequest):
     try:
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=450,
-            system=SYSTEM_PROMPT,
-            messages=[
+        headers = {
+            "x-api-key": API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        body = {
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 450,
+            "system": SYSTEM_PROMPT,
+            "messages": [
                 {"role": "user", "content": request.message}
             ]
-        )
-
-        response_text = message.content[0].text
-
-        return {
-            "success": True,
-            "response": response_text
         }
 
-    except anthropic.AuthenticationError:
-        return {
-            "success": False,
-            "detail": "Invalid API key. Please check your ANTHROPIC_API_KEY in .env file."
-        }
+        response = requests.post(API_URL, headers=headers, json=body)
+        data = response.json()
 
-    except anthropic.RateLimitError:
-        return {
-            "success": False,
-            "detail": "Rate limit reached. Please wait a moment and try again."
-        }
+        if response.status_code == 200:
+            text = data["content"][0]["text"]
+            return {"success": True, "response": text}
 
-    except anthropic.APIConnectionError:
-        return {
-            "success": False,
-            "detail": "Cannot connect to Anthropic API. Check your internet connection."
-        }
+        elif response.status_code == 401:
+            return {"success": False, "detail": "Invalid API key. Check your .env file."}
+
+        elif response.status_code == 429:
+            return {"success": False, "detail": "Rate limit reached. Try again shortly."}
+
+        elif response.status_code == 500:
+            return {"success": False, "detail": "Anthropic server error. Try again."}
+
+        else:
+            return {"success": False, "detail": f"API error {response.status_code}: {data}"}
+
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "detail": "No internet connection."}
+
+    except requests.exceptions.Timeout:
+        return {"success": False, "detail": "Request timed out. Try again."}
 
     except Exception as e:
-        return {
-            "success": False,
-            "detail": str(e)
-        }
+        return {"success": False, "detail": str(e)}
 
 
 @app.get("/")
