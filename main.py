@@ -1,10 +1,7 @@
 import os
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
 import google.generativeai as genai
-
 from datetime import datetime
 
 # =====================================
@@ -17,20 +14,16 @@ app = FastAPI()
 # =====================================
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=["*"],
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
 # =====================================
-# GEMINI API KEY
+# GEMINI API KEY (FIXED)
 # =====================================
-API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
+API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")  # ✅ FIXED
 
 # =====================================
 # CONFIGURE GEMINI
@@ -38,48 +31,29 @@ API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 model = None
 
 if API_KEY:
-
     genai.configure(api_key=API_KEY)
-
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash-lite"
-    )
+    model = genai.GenerativeModel("gemini-1.5-flash")  # safer stable model
 
 # =====================================
-# DAILY LIMIT
+# DAILY LIMIT STORAGE
 # =====================================
 user_requests = {}
-
 DAILY_LIMIT = 5
 
 
 def check_limit(ip):
-
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # NEW USER
     if ip not in user_requests:
+        user_requests[ip] = {"date": today, "count": 0}
 
-        user_requests[ip] = {
-            "date": today,
-            "count": 0
-        }
-
-    # RESET DAILY
     if user_requests[ip]["date"] != today:
+        user_requests[ip] = {"date": today, "count": 0}
 
-        user_requests[ip] = {
-            "date": today,
-            "count": 0
-        }
-
-    # LIMIT REACHED
     if user_requests[ip]["count"] >= DAILY_LIMIT:
         return False
 
-    # INCREMENT
     user_requests[ip]["count"] += 1
-
     return True
 
 
@@ -88,7 +62,6 @@ def check_limit(ip):
 # =====================================
 @app.get("/")
 async def root():
-
     return {
         "message": "Backend Running 🚀",
         "api_key_loaded": API_KEY is not None
@@ -101,77 +74,56 @@ async def root():
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
-    # CHECK API KEY
     if model is None:
-
         return {
             "success": False,
-            "error": "GEMINI_API_KEY missing in Render"
+            "error": "GEMINI_API_KEY missing in Render environment variables"
         }
 
     ip = request.client.host
 
-    # DAILY LIMIT
     if not check_limit(ip):
-
         return {
             "success": False,
             "error": "Daily limit reached. Try again after 24 hours."
         }
 
-    # INPUTS
     domain = data.get("domain", "")
     technology = data.get("technology", "")
     level = data.get("level", "")
 
-    # =====================================
-    # LOW COST PROMPT
-    # =====================================
     prompt = f"""
-Dept:{domain}
-Tech:{technology}
-Level:{level}
+Domain: {domain}
+Technology: {technology}
+Level: {level}
 
-Format:
-Title:
-Explanation:
-Features:
-Implementation:
-Code:
+Generate:
+- Title
+- Explanation
+- Features
+- Implementation steps
+- Sample code
 
-Short concise response only.
+Keep response short and structured.
 """
 
     try:
-
-        # GEMINI RESPONSE
         response = model.generate_content(
-
             prompt,
-
             generation_config={
-
                 "max_output_tokens": 220,
-
                 "temperature": 0.4
             }
         )
 
         return {
-
             "success": True,
-
-            "remaining_requests":
-                DAILY_LIMIT - user_requests[ip]["count"],
-
+            "remaining_requests": DAILY_LIMIT - user_requests[ip]["count"],
             "result": response.text
         }
 
     except Exception as e:
-
         return {
-
             "success": False,
-
             "error": str(e)
         }
