@@ -21,21 +21,27 @@ app.add_middleware(
 )
 
 # =====================================
-# GEMINI API KEY (RENDER ENV)
+# API KEY
 # =====================================
 API_KEY = os.getenv("AIzaSyDUpnD4Yp6E3fYW7qdWnjdhPm99BxVIaho")
 
 # =====================================
-# CONFIGURE GEMINI
+# GEMINI CONFIG (ONLY 2.5 FLASH LITE)
 # =====================================
 model = None
+model_error = None
 
 if API_KEY:
-    genai.configure(api_key=API_KEY)
+    try:
+        genai.configure(api_key=API_KEY)
 
-    model = genai.GenerativeModel(
-        model_name="gemini-2.5-flash-lite"
-    )
+        model = genai.GenerativeModel(
+            model_name="gemini-2.5-flash-lite"
+        )
+
+    except Exception as e:
+        model_error = str(e)
+        model = None
 
 # =====================================
 # DAILY LIMIT
@@ -68,24 +74,26 @@ def root():
     return {
         "message": "Backend Running 🚀",
         "api_key_loaded": API_KEY is not None,
-        "model_loaded": model is not None
+        "model_loaded": model is not None,
+        "model_error": model_error
     }
 
 
 # =====================================
-# DEBUG (IMPORTANT)
+# DEBUG
 # =====================================
 @app.get("/env-check")
 def env_check():
     return {
         "GEMINI_API_KEY_in_env": "GEMINI_API_KEY" in os.environ,
-        "GEMINI_API_KEY_value": os.getenv("GEMINI_API_KEY"),
-        "GEMINI_API_KEY_loaded": bool(API_KEY)
+        "GEMINI_API_KEY_loaded": bool(API_KEY),
+        "model_loaded": model is not None,
+        "model_error": model_error
     }
 
 
 # =====================================
-# GENERATE ROUTE
+# GENERATE
 # =====================================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
@@ -93,7 +101,8 @@ async def generate(request: Request, data: dict):
     if model is None:
         return {
             "success": False,
-            "error": "GEMINI_API_KEY not found in Render environment variables"
+            "error": "Gemini 2.5 Flash Lite failed to load",
+            "details": model_error
         }
 
     ip = request.client.host
