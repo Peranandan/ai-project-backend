@@ -1,71 +1,49 @@
 import os
-from contextlib import asynccontextmanager
+import hashlib
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-import google.generativeai as genai
 from datetime import datetime
+import google.generativeai as genai
 
-# =====================================
-# GLOBALS
-# =====================================
-model = None
-model_error = None
+# =========================
+# CONFIG
+# =========================
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
 DAILY_LIMIT = 5
 user_requests = {}
 
-# =====================================
-# GEMINI API KEY
-# =====================================
-GEMINI_API_KEY = "AIzaSyBO8zuFTURp_fSX72cUqVWUDCeoeYbXVX4"
+# 🔥 CACHE (KEY FEATURE)
+cache = {}
 
+model = None
 
-# =====================================
-# STARTUP
-# =====================================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global model, model_error
+# =========================
+# INIT GEMINI
+# =========================
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-    api_key = GEMINI_API_KEY.strip()
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash"
+    )
 
-    if not api_key or api_key == "your_key_here":
-        model_error = "Please paste your real Gemini API key in GEMINI_API_KEY variable"
-        print(f"[STARTUP ERROR] {model_error}")
-    else:
-        try:
-            genai.configure(api_key=api_key)
-
-            # ✅ FIXED MODEL (COST OPTIMIZED)
-            model = genai.GenerativeModel(model_name="gemini-1.5-flash")
-
-            model_error = None
-            print("[STARTUP] Gemini model loaded ✅")
-
-        except Exception as e:
-            model_error = str(e)
-            print(f"[STARTUP ERROR] {model_error}")
-
-    yield
-
-
-# =====================================
+# =========================
 # APP
-# =====================================
-app = FastAPI(lifespan=lifespan)
+# =========================
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# =====================================
+# =========================
 # RATE LIMIT
-# =====================================
-def check_limit(ip: str) -> bool:
+# =========================
+def check_limit(ip: str):
     today = datetime.now().strftime("%Y-%m-%d")
 
     if ip not in user_requests:
@@ -80,83 +58,74 @@ def check_limit(ip: str) -> bool:
     user_requests[ip]["count"] += 1
     return True
 
+# =========================
+# CACHE KEY GENERATOR
+# =========================
+def generate_cache_key(dept, tech, level):
+    raw = f"{dept}-{tech}-{level}".lower().strip()
+    return hashlib.md5(raw.encode()).hexdigest()
 
-# =====================================
+# =========================
 # ROOT
-# =====================================
+# =========================
 @app.get("/")
 def root():
     return {
         "message": "Backend Running 🚀",
         "model_loaded": model is not None,
-        "model_error": model_error
+        "cache_size": len(cache)
     }
 
-
-# =====================================
-# USAGE
-# =====================================
-@app.get("/usage")
-def usage(request: Request):
-    ip = request.client.host
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    if ip not in user_requests or user_requests[ip]["date"] != today:
-        used = 0
-    else:
-        used = user_requests[ip]["count"]
-
-    return {
-        "ip": ip,
-        "used": used,
-        "limit": DAILY_LIMIT,
-        "remaining": max(0, DAILY_LIMIT - used)
-    }
-
-
-# =====================================
-# GENERATE
-# =====================================
+# =========================
+# GENERATE (CACHED VERSION)
+# =========================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
     if model is None:
-        return {
-            "success": False,
-            "error": "Gemini model not initialized",
-            "details": model_error
-        }
+        return {"success": False, "error": "Model not loaded"}
 
     ip = request.client.host
 
     if not check_limit(ip):
-        return {
-            "success": False,
-            "error": f"Daily limit of {DAILY_LIMIT} requests reached."
-        }
+        return {"success": False, "error": "Daily limit reached"}
 
     department = data.get("department", "").strip()
     technology = data.get("technology", "").strip()
     level = data.get("level", "").strip()
 
     if not department or not technology or not level:
+        return {"success": False, "error": "Missing fields"}
+
+    # 🔥 CREATE CACHE KEY
+    cache_key = generate_cache_key(department, technology, level)
+
+    # =========================
+    # RETURN CACHE (NO API CALL)
+    # =========================
+    if cache_key in cache:
         return {
-            "success": False,
-            "error": "department, technology, and level are required."
+            "success": True,
+            "cached": True,
+            "result": cache[cache_key]
         }
 
+    # =========================
+    # OPTIMIZED PROMPT
+    # =========================
     prompt = f"""
+Project idea:
+
 Dept:{department}
 Tech:{technology}
 Level:{level}
 
-Reply in this format:
-Title: short title
-Explanation: one line
-Features: 1.. 2.. 3..
-Implementation: 1.. 2.. 3..
-Code:
-10-15 lines simple code
+Return:
+Title (5 words max)
+Explanation (1 line)
+Features (3 points)
+Implementation (3 steps)
+Code (10 lines max)
 """
 
     try:
@@ -164,13 +133,19 @@ Code:
             prompt,
             generation_config={
                 "temperature": 0.2,
-                "max_output_tokens": 220
+                "max_output_tokens": 180
             }
         )
 
+        result = response.text
+
+        # 🔥 STORE IN CACHE
+        cache[cache_key] = result
+
         return {
             "success": True,
-            "result": response.text
+            "cached": False,
+            "result": result
         }
 
     except Exception as e:
