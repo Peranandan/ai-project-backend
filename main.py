@@ -1,54 +1,47 @@
 import os
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import google.generativeai as genai
 
 from datetime import datetime
 
-# =====================================
-# GET GEMINI API KEY
-# =====================================
-API_KEY = os.environ.get("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
-
-# CHECK API KEY
-if not API_KEY:
-    raise Exception("GEMINI_API_KEY missing")
-
-# =====================================
-# CONFIGURE GEMINI
-# =====================================
-genai.configure(api_key=API_KEY)
-
-# GEMINI MODEL
-model = genai.GenerativeModel(
-    "gemini-2.5-flash-lite"
-)
-
-# =====================================
-# FASTAPI APP
-# =====================================
+# =========================
+# FASTAPI
+# =========================
 app = FastAPI()
 
-# =====================================
+# =========================
 # CORS
-# =====================================
+# =========================
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=["*"],
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
-# =====================================
+# =========================
+# API KEY
+# =========================
+API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
+
+# DO NOT CRASH APP
+if API_KEY:
+    genai.configure(api_key=API_KEY)
+
+    model = genai.GenerativeModel(
+        "gemini-2.5-flash-lite"
+    )
+
+else:
+    model = None
+
+# =========================
 # DAILY LIMIT
-# =====================================
+# =========================
 user_requests = {}
 
 DAILY_LIMIT = 5
@@ -58,7 +51,6 @@ def check_limit(ip):
 
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # NEW USER
     if ip not in user_requests:
 
         user_requests[ip] = {
@@ -66,7 +58,6 @@ def check_limit(ip):
             "count": 0
         }
 
-    # RESET DAILY
     if user_requests[ip]["date"] != today:
 
         user_requests[ip] = {
@@ -74,51 +65,55 @@ def check_limit(ip):
             "count": 0
         }
 
-    # LIMIT REACHED
     if user_requests[ip]["count"] >= DAILY_LIMIT:
         return False
 
-    # INCREMENT COUNT
     user_requests[ip]["count"] += 1
 
     return True
 
 
-# =====================================
-# ROOT ROUTE
-# =====================================
+# =========================
+# ROOT
+# =========================
 @app.get("/")
 async def root():
 
     return {
-        "message": "AI Project Generator Running 🚀"
+        "message": "Backend Running 🚀",
+        "api_key_loaded": API_KEY is not None
     }
 
 
-# =====================================
-# GENERATE API
-# =====================================
+# =========================
+# GENERATE
+# =========================
 @app.post("/generate")
 async def generate(request: Request, data: dict):
+
+    # CHECK API KEY
+    if model is None:
+
+        return {
+            "success": False,
+            "error": "GEMINI_API_KEY missing in Render"
+        }
 
     ip = request.client.host
 
     # CHECK LIMIT
     if not check_limit(ip):
 
-        raise HTTPException(
-            status_code=429,
-            detail="Daily limit reached. Resets after 24 hours."
-        )
+        return {
+            "success": False,
+            "error": "Daily limit reached"
+        }
 
-    # GET INPUTS
     domain = data.get("domain", "")
     technology = data.get("technology", "")
     level = data.get("level", "")
 
-    # =====================================
     # LOW COST PROMPT
-    # =====================================
     prompt = f"""
 Dept:{domain}
 Tech:{technology}
@@ -136,7 +131,6 @@ Short concise response only.
 
     try:
 
-        # GEMINI RESPONSE
         response = model.generate_content(
             prompt,
 
@@ -147,18 +141,15 @@ Short concise response only.
         )
 
         return {
-
             "success": True,
-
             "remaining_requests":
                 DAILY_LIMIT - user_requests[ip]["count"],
-
             "result": response.text
         }
 
     except Exception as e:
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+        return {
+            "success": False,
+            "error": str(e)
+        }
