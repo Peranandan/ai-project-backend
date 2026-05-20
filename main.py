@@ -66,7 +66,10 @@ class ChatRequest(BaseModel):
 def chat(request: ChatRequest):
     try:
         if not GEMINI_API_KEY:
-            return {"success": False, "detail": "GEMINI_API_KEY not set in .env file"}
+            return {
+                "success": False,
+                "detail": "GEMINI_API_KEY not set in .env file"
+            }
 
         headers = {
             "Content-Type": "application/json"
@@ -98,14 +101,22 @@ def chat(request: ChatRequest):
         data = response.json()
 
         if response.status_code == 200:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return {"success": False, "detail": "No response from Gemini. Try again."}
+
+            text = candidates[0]["content"]["parts"][0]["text"]
             return {"success": True, "response": text}
 
         elif response.status_code == 400:
-            return {"success": False, "detail": "Bad request. Check your input."}
+            error_msg = data.get("error", {}).get("message", "Bad request")
+            return {"success": False, "detail": f"Bad request: {error_msg}"}
 
         elif response.status_code == 403:
             return {"success": False, "detail": "Invalid API key. Check your GEMINI_API_KEY in .env file."}
+
+        elif response.status_code == 404:
+            return {"success": False, "detail": "Gemini model not found. Check the model name."}
 
         elif response.status_code == 429:
             return {"success": False, "detail": "Rate limit reached. Please wait and try again."}
@@ -114,13 +125,17 @@ def chat(request: ChatRequest):
             return {"success": False, "detail": "Gemini server error. Try again."}
 
         else:
-            return {"success": False, "detail": f"API error {response.status_code}: {data}"}
+            error_msg = data.get("error", {}).get("message", str(data))
+            return {"success": False, "detail": f"API error {response.status_code}: {error_msg}"}
 
     except requests.exceptions.ConnectionError:
         return {"success": False, "detail": "No internet connection."}
 
     except requests.exceptions.Timeout:
         return {"success": False, "detail": "Request timed out. Try again."}
+
+    except KeyError as e:
+        return {"success": False, "detail": f"Unexpected response format: {str(e)}"}
 
     except Exception as e:
         return {"success": False, "detail": str(e)}
