@@ -3,26 +3,27 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import google.generativeai as genai
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# =========================
 # LOAD ENV
-# =========================
 load_dotenv()
 
 API_KEY = os.getenv("AIzaSyDL8MqRkUsm8Q6f9noavp4Opp9uwi2Sj2A")
 
-if API_KEY:
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash-lite")
-else:
-    model = None
+if not API_KEY:
+    raise Exception("GEMINI_API_KEY missing")
 
-# =========================
-# APP
-# =========================
+# GEMINI CONFIG
+genai.configure(api_key=API_KEY)
+
+model = genai.GenerativeModel(
+    "gemini-2.5-flash-lite"
+)
+
+# FASTAPI
 app = FastAPI()
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,93 +32,103 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
-# 24-HOUR LIMIT SYSTEM
-# =========================
+# DAILY LIMIT
 user_requests = {}
-DAILY_LIMIT = 6
+
+DAILY_LIMIT = 5
 
 
-def check_limit(ip: str):
-    now = datetime.utcnow()
+def check_limit(ip):
+
+    today = datetime.now().strftime("%Y-%m-%d")
 
     if ip not in user_requests:
         user_requests[ip] = {
-            "count": 0,
-            "reset_time": now + timedelta(hours=24)
+            "date": today,
+            "count": 0
         }
 
-    user_data = user_requests[ip]
+    # RESET DAILY
+    if user_requests[ip]["date"] != today:
+        user_requests[ip] = {
+            "date": today,
+            "count": 0
+        }
 
-    # RESET AFTER 24 HOURS
-    if now > user_data["reset_time"]:
-        user_data["count"] = 0
-        user_data["reset_time"] = now + timedelta(hours=24)
+    # LIMIT
+    if user_requests[ip]["count"] >= DAILY_LIMIT:
+        return False
 
-    if user_data["count"] >= DAILY_LIMIT:
-        return False, int((user_data["reset_time"] - now).seconds)
+    user_requests[ip]["count"] += 1
 
-    user_data["count"] += 1
-    return True, int((user_data["reset_time"] - now).seconds)
+    return True
 
 
-# =========================
-# HOME
-# =========================
+# ROOT
 @app.get("/")
-def home():
-    return {"message": "AI Project Generator Running 🚀"}
+async def root():
+
+    return {
+        "message": "AI Project Generator Running 🚀"
+    }
 
 
-# =========================
-# GENERATE API
-# =========================
+# GENERATE
 @app.post("/generate")
 async def generate(request: Request, data: dict):
 
-    if model is None:
-        raise HTTPException(status_code=500, detail="Gemini API Key missing")
-
     ip = request.client.host
 
-    allowed, time_left = check_limit(ip)
+    # CHECK LIMIT
+    if not check_limit(ip):
 
-    if not allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Daily limit reached. Try again after {time_left//3600}h {(time_left%3600)//60}m"
+            detail="Daily limit reached. Resets after 24 hours."
         )
 
     domain = data.get("domain", "")
-    tech = data.get("technology", "")
+    technology = data.get("technology", "")
     level = data.get("level", "")
 
+    # LOW COST PROMPT
     prompt = f"""
-AI Project Generator
-
 Dept:{domain}
-Tech:{tech}
+Tech:{technology}
 Level:{level}
 
-Return:
-1.Title
-2.Idea
-3.Features (3)
-4.Steps (3-5)
-5.Code (short)
+Format:
+Title:
+Explanation:
+Features:
+Implementation:
+Code:
+
+Short concise response only.
 """
 
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "max_output_tokens": 400,
-            "temperature": 0.7
-        }
-    )
+    try:
 
-    return {
-        "success": True,
-        "result": response.text,
-        "remaining": DAILY_LIMIT - user_requests[ip]["count"],
-        "reset_in_seconds": time_left
-    }
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "max_output_tokens": 220,
+                "temperature": 0.4
+            }
+        )
+
+        return {
+            "success": True,
+
+            "remaining_requests":
+                DAILY_LIMIT - user_requests[ip]["count"],
+
+            "result": response.text
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
